@@ -17,9 +17,9 @@ def read_csv_auto(filepath):
         print(f"Error crítico al leer {filepath}: {e}")
         exit()
 
-aules = read_csv_auto("aules.csv")
-proposta = read_csv_auto("proposta_partida.csv")
-sessions = read_csv_auto("sessions.csv")
+aules = read_csv_auto("data/aules.csv")
+proposta = read_csv_auto("data/proposta_partida.csv")
+sessions = read_csv_auto("data/sessions.csv")
 
 # Cruzar los datos:
 # 1. Unimos propuesta y sesiones para tener el número de alumnos ('alumnes') por sesión

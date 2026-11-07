@@ -18,8 +18,8 @@ def main():
             print(f"Error al leer {filepath}: {e}")
             return None
 
-    sessions = read_csv_auto('sessions.csv')
-    aules = read_csv_auto('aules.csv')
+    sessions = read_csv_auto('data/sessions.csv')
+    aules = read_csv_auto('data/aules.csv')
     
     if sessions is None or aules is None:
         print("❌ Error: No se encontraron los archivos de entrada (sessions.csv o aules.csv).")

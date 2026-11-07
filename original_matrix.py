@@ -3,7 +3,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 # 1. Cargar los datos
-df = pd.read_csv('sessions.csv')
+df = pd.read_csv('data/sessions.csv')
 
 # Eliminamos filas que no tengan hora de inicio o turno requerido (opcional pero recomendado)
 df = df.dropna(subset=['h_ini', 'torn_requerit']).copy()

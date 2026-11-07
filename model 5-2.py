@@ -11,8 +11,8 @@ def read_csv_auto(filepath):
         return None
 
 print("Cargando datos para resolver el Nivel 5.2...")
-aules = read_csv_auto("aules.csv")
-sessions = read_csv_auto("sessions.csv")
+aules = read_csv_auto("data/aules.csv")
+sessions = read_csv_auto("data/sessions.csv")
 
 # Intentamos cargar primero la salida del 5.1 (proposta-aules-s2.csv o proposta-aules.csv)
 proposta = read_csv_auto("proposta-aules-s2.csv")
