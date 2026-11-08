@@ -46,9 +46,9 @@ def main():
         return h * 60 + m
 
     def extreure_passadis(aula_str):
+        # Normalment el passadís és l'edifici + número abans de la barra. Ex: Q6/1012 -> Q6
         if pd.isna(aula_str) or not isinstance(aula_str, str): return None
-        # Captura Espina + Barra + Planta (ex: 'Q4/1')
-        match = re.match(r'^([A-Z]\d/\d)', aula_str) 
+        match = re.match(r'^([A-Z]\d)/', aula_str)
         return match.group(1) if match else None
 
     def bloquejar_aula(data_sessio, h_ini_str, durada_min, aula):

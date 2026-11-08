@@ -1,65 +1,65 @@
 {
   "veredicte": "NO VALIDA",
   "restriccions": {
-    "R1-TORN": {
-      "total": 1238,
-      "compten": 0,
-      "declarades": 458,
-      "heretades": 780
-    },
-    "R3-AFORAMENT": {
-      "total": 58,
-      "compten": 0,
-      "declarades": 0,
-      "heretades": 58
-    },
-    "R3-TIPUS": {
-      "total": 45,
-      "compten": 45,
+    "R1-FIXADA": {
+      "total": 889,
+      "compten": 889,
       "declarades": 0,
       "heretades": 0
     },
+    "R1-TORN": {
+      "total": 1238,
+      "compten": 115,
+      "declarades": 0,
+      "heretades": 1123
+    },
     "R4-ALUMNAT": {
       "total": 483,
-      "compten": 249,
+      "compten": 236,
       "declarades": 0,
-      "heretades": 234
+      "heretades": 247
     },
     "R4-DOCENT": {
-      "total": 692,
+      "total": 706,
       "compten": 0,
       "declarades": 0,
-      "heretades": 692
+      "heretades": 706
     },
     "R4-PLAB": {
       "total": 117,
       "compten": 0,
       "declarades": 0,
       "heretades": 117
+    },
+    "R5-SENSE-AULA": {
+      "total": 6118,
+      "compten": 6118,
+      "declarades": 0,
+      "heretades": 0
     }
   },
   "no_avaluables": {
     "ESPAI-DOBLE": 415
   },
   "objectius": {
-    "hores_mortes_min": 76770,
-    "desplacaments_aula": 3660,
-    "desplacaments_edifici": 17,
-    "canvis_franja": 2040,
-    "canvis_aula": 220,
-    "r6_aules_te_extra_per_grup": 89,
-    "r6_canvis_te_paul_fora_passadis": 1379,
+    "hores_mortes_min": 76800,
+    "desplacaments_aula": 54,
+    "desplacaments_edifici": 0,
+    "canvis_franja": 2039,
+    "canvis_aula": 1577,
+    "r6_aules_te_extra_per_grup": 6,
+    "r6_canvis_te_paul_fora_passadis": 0,
     "sessions_avaluades": 7739
   },
-  "relaxacions_declarades": 2,
-  "incompliments_declarats": 458,
+  "relaxacions_declarades": 1,
+  "incompliments_declarats": 0,
   "context": {
     "semestre": 2,
     "escenari": null,
     "nomes_aules": false,
     "paquet_sha256": "6d1588ddfb55cc264b8bdeb00a05d7725dc76ced135fdcf8f3153ec71177041f",
-    "proposta_sha256": "4b466e0fd17847ff63a7214ccbe3fe84151e23981fb5be76655eb573f68c3bc5",
+    "proposta_sha256": "85e23a0b17a0ff81efdefbe4da836ebd4ddbb78561b584671f554d43709436ab",
     "referencia_sha256": null,
-    "relaxacions_sha256": "13340e37190538b38c6f1c9b50c8a19c6248dc4da1a7f5a3dd82925f2f794650"
+    "relaxacions_sha256": "7fb965eb64fbf20e3fdc70b1a5b26403a6dfb17cc45162f61600d3b7056f786d"
   }
 }
