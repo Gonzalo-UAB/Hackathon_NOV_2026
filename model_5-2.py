@@ -1,189 +1,223 @@
 import pandas as pd
-import datetime as dt
-from collections import defaultdict
-from ortools.sat.python import cp_model
+import os
+import re
 
-def load_data():
-    """Carrega els arxius CSV en DataFrames de pandas."""
-    sessions = pd.read_csv('paquet/sessions.csv')
-    aules = pd.read_csv('paquet/aules.csv')
-    activitats = pd.read_csv('paquet/activitats.csv')
-    proposta_partida = pd.read_csv('paquet/proposta_partida.csv')
+def solve_5_2_safe():
+    print("--- INICIANT MODEL 5.2 (Horaris i Aules - Basat en el model segur de 84/100) ---")
     
-    # Filtrar només 2n semestre si és necessari
-    sessions_q2 = sessions[sessions['semestre'] == 2].copy()
+    sessions_path = 'paquet/sessions.csv'
+    aules_path = 'paquet/aules.csv'
+    proposta_path = 'paquet/proposta_partida.csv'
     
-    return sessions_q2, aules, activitats, proposta_partida
-
-def solve_time_stage(sessions, activitats):
-    """
-    ETAPA 1: Solver de Temps. 
-    Assigna un dia de la setmana i un slot d'inici a cada activitat_id.
-    """
-    model = cp_model.CpModel()
+    for fitxer in [sessions_path, aules_path, proposta_path]:
+        if not os.path.exists(fitxer):
+            print(f"❌ ERROR: No es troba '{fitxer}'.")
+            return
+            
+    sessions_df = pd.read_csv(sessions_path)
+    aules_df = pd.read_csv(aules_path)
+    proposta_df = pd.read_csv(proposta_path)
     
-    # Paràmetres temporals (Slots d'una hora)
-    dies_setmana = ['dl', 'dt', 'dc', 'dj', 'dv']
-    slots_mati = [8, 9, 10, 11, 12, 13]  # 08:30 a 14:30
-    slots_tarda = [14, 15, 16, 17, 18, 19, 20] # 14:30 a 21:00
+    # Ens quedem les columnes necessàries sense duplicar
+    cols_sessions = [c for c in sessions_df.columns if c not in proposta_df.columns or c == 'id_sessio']
+    df = proposta_df.merge(sessions_df[cols_sessions], on='id_sessio', how='left')
+    
+    # ---------------------------------------------------------
+    # 1. PREPARACIÓ D'ESTRUCTURES
+    # ---------------------------------------------------------
+    MAX_AULES = 19
+    aules_docents = aules_df[aules_df['tipus'].isin(['Aules docents', 'Seminaris'])].sort_values('capacitat').to_dict('records')
+    aules_dict = aules_df.set_index('aula').to_dict('index')
+    
+    ocupacio_aules = {a: {} for a in aules_df['aula']}
+    # Control per no trencar les regles R4-DOCENT i R4-ALUMNAT en moure horaris
+    ocupacio_docent = {} 
+    ocupacio_grup = {}
+    ocupacio_franja = {} # Quantitat d'aules usades per (dia, h_ini)
+    
+    slots_mati = [f"{h:02d}:30" for h in range(8, 14)]
+    slots_tarda = [f"{h:02d}:30" for h in range(14, 21)]
     tots_slots = slots_mati + slots_tarda
+    dies = ['dl', 'dt', 'dc', 'dj', 'dv']
     
-    # Variables X[activitat_id]: (dia, slot_inici)
-    # Per simplificar en CP-SAT, fusionem dia i hora en un únic índex de time_slot o fem variables per dia i per hora
-    X_dia = {}
-    X_hora = {}
-    
-    activitats_ids = activitats['activitat_id'].unique()
-    
-    for act_id in activitats_ids:
-        # Variables de decisió
-        X_dia[act_id] = model.NewIntVar(0, 4, f'dia_{act_id}')
-        X_hora[act_id] = model.NewIntVar(8, 20, f'hora_{act_id}')
-        
-        # Filtrem les sessions de l'activitat per saber restriccions
-        sess_act = sessions[sessions['activitat_id'] == act_id].iloc[0]
-        torn = sess_act['torn_requerit']
-        
-        # R1-TORN & R2-FINESTRA
-        if torn == 'mati' and sess_act['sense_espai'] == 0:
-            model.Add(X_hora[act_id] <= 13)
-        elif torn == 'tarda':
-            model.Add(X_hora[act_id] >= 14)
-            
-        # R1-FIXADA & R7-PLAB
-        if pd.notna(sess_act['fixada']):
-            # Fixar dia i hora de partida
-            dia_idx = dies_setmana.index(sess_act['dia_partida'].lower()[:2])
-            h_ini = int(sess_act['h_ini_partida'].split(':')[0])
-            model.Add(X_dia[act_id] == dia_idx)
-            model.Add(X_hora[act_id] == h_ini)
-            
-    # R4-DOCENT i R4-ALUMNAT (Incompatibilitats / Solapaments)
-    # Agrupem per docent i per grup d'alumnes
-    # [Aquí s'implementarien els NoOverlap2D o AllDifferent per franges temporals]
+    proposta_final = []
+    relaxacions_52 = []
 
-    # Solver
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 180.0
-    solver.parameters.num_search_workers = 8
-    
-    print("Iniciant Etapa 1: Solver Temporal...")
-    status = solver.Solve(model)
-    
-    time_solution = {}
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        for act_id in activitats_ids:
-            time_solution[act_id] = {
-                'dia': dies_setmana[solver.Value(X_dia[act_id])],
-                'hora_ini': f"{solver.Value(X_hora[act_id]):02d}:30" # Simplificació a franges de :30
-            }
-    return time_solution
+    def bloquejar_temps(docent, grup, dia, h_ini, req_espai):
+        if pd.notna(docent):
+            ocupacio_docent.setdefault(docent, set()).add((dia, h_ini))
+        if pd.notna(grup):
+            ocupacio_grup.setdefault(grup, set()).add((dia, h_ini))
+        if req_espai:
+            ocupacio_franja[(dia, h_ini)] = ocupacio_franja.get((dia, h_ini), 0) + 1
 
-def solve_space_stage(sessions, aules, time_solution):
-    """
-    ETAPA 2: Solver d'Espais.
-    Assigna aula física complint capacitat i tipus un cop el temps està fixat.
-    """
-    model = cp_model.CpModel()
-    
-    Y_aula = {}
-    aules_list = aules['aula'].tolist()
-    aules_cap = aules.set_index('aula')['capacitat'].to_dict()
-    
-    # Nomes per sessions presencials
-    sessions_req_espai = sessions[sessions['sense_espai'] == 0]
-    
-    for idx, row in sessions_req_espai.iterrows():
-        s_id = row['id_sessio']
-        Y_aula[s_id] = model.NewIntVar(0, len(aules_list) - 1, f'aula_{s_id}')
-        
-        # R3-AFORAMENT
-        # Restricció complexa d'imposar a priori, es fa limitant el domini o relaxant
-        alumnes = row['alumnes']
-        aules_valides = [i for i, aula in enumerate(aules_list) if aules_cap[aula] >= alumnes]
-        
-        if not aules_valides:
-            # R3-AFORAMENT RELAXACIÓ: assignem la més gran (ex: Q1/1011 de 160 places)
-            max_aula = aules.loc[aules['capacitat'].idxmax(), 'aula']
-            aules_valides = [aules_list.index(max_aula)]
-            # Marquem per a relaxacions.csv
-            
-        model.AddAllowedAssignments([Y_aula[s_id]], [[v] for v in aules_valides])
-        
-        # R7-PLAB (fixar laboratori)
-        if row['tipus'] == 'PLAB':
-            aula_idx = aules_list.index(row['aula_partida'])
-            model.Add(Y_aula[s_id] == aula_idx)
+    def es_franja_valida(docent, grup, dia, h_ini, req_espai):
+        if pd.notna(docent) and (dia, h_ini) in ocupacio_docent.get(docent, set()): return False
+        if pd.notna(grup) and (dia, h_ini) in ocupacio_grup.get(grup, set()): return False
+        if req_espai and ocupacio_franja.get((dia, h_ini), 0) >= MAX_AULES: return False
+        return True
 
-    # R4-AULA (Cap aula amb 2 sessions simultànies)
-    # Agrupem sessions assignades a la mateixa franja a la fase 1 i fem AllDifferent sobre Y_aula
-    
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 180.0
-    solver.parameters.num_search_workers = 8
-    
-    print("Iniciant Etapa 2: Solver d'Espais...")
-    status = solver.Solve(model)
-    
-    space_solution = {}
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        for idx, row in sessions_req_espai.iterrows():
-            s_id = row['id_sessio']
-            space_solution[s_id] = aules_list[solver.Value(Y_aula[s_id])]
-            
-    return space_solution
-
-def generate_outputs(sessions, time_solution, space_solution):
-    """Genera els arxius de sortida requerits."""
-    # 1. Proposta-torns.csv
-    proposta_records = []
-    relaxacions_records = []
-    
-    # Construcció relaxacions R3 i R1 (Hardcoded per estructura base)
-    
-    for idx, row in sessions.iterrows():
-        s_id = row['id_sessio']
-        act_id = row['activitat_id']
+    # ---------------------------------------------------------
+    # 2. FASE TEMPORAL (Assignació de dia i hora segura)
+    # ---------------------------------------------------------
+    # Primer passem les sessions fixades i els laboratoris per bloquejar-los
+    sessions_a_ubicar = []
+    for idx, row in df.iterrows():
+        req_espai = row.get('sense_espai', 0) in [0, '0', False, 0.0] and row.get('tipus') != 'PLAB'
+        fixada = pd.notna(row.get('fixada'))
         
-        if act_id in time_solution:
-            dia_str = time_solution[act_id]['dia'].upper()
-            h_ini_str = time_solution[act_id]['hora_ini']
+        if fixada or not req_espai:
+            bloquejar_temps(row['docent'], row['grup'], row['dia'], row['h_ini'], req_espai)
+            sessions_a_ubicar.append((row, row['dia'], row['h_ini'], True)) # True = Ja té temps definit
         else:
-            dia_str, h_ini_str = row['dia_partida'], row['h_ini_partida']
-            
-        aula_str = space_solution.get(s_id, '')
+            sessions_a_ubicar.append((row, None, None, False))
+
+    # Segon pas: Ubicar la resta respectant els torns i el límit de 19
+    for i, (row, dia, h_ini, definit) in enumerate(sessions_a_ubicar):
+        if definit: continue
         
-        # Detectar dobles graus al matí per relaxació (R1-TORN)
-        if '51' in str(row['grup']) and int(h_ini_str.split(':')[0]) < 14:
-            relaxacions_records.append({
-                'restriccio': 'R1-TORN',
-                'sessions': s_id,
-                'justificacio': 'Grup de Doble Titulació comparteix classe presencial al matí.'
-            })
-            
-        proposta_records.append({
-            'id_sessio': s_id,
-            'dia': dia_str,
-            'h_ini': h_ini_str,
-            'aula': aula_str
-        })
+        req_espai = True
+        torn_req = str(row.get('torn_requerit', 'mati')).lower()
+        dia_orig = row['dia']
+        h_orig = row['h_ini']
+        docent = row.get('docent')
+        grup = row.get('grup')
         
-    df_proposta = pd.DataFrame(proposta_records)
-    df_proposta.to_csv('proposta-torns.csv', index=False)
+        # Intent 1: Quedar-se al seu lloc original
+        if es_franja_valida(docent, grup, dia_orig, h_orig, req_espai):
+            bloquejar_temps(docent, grup, dia_orig, h_orig, req_espai)
+            sessions_a_ubicar[i] = (row, dia_orig, h_orig, True)
+            continue
+            
+        # Intent 2: Buscar lloc dins del mateix torn
+        slots_pref = slots_mati if torn_req == 'mati' else slots_tarda
+        trobat = False
+        for d in dies:
+            for s in slots_pref:
+                if es_franja_valida(docent, grup, d, s, req_espai):
+                    bloquejar_temps(docent, grup, d, s, req_espai)
+                    sessions_a_ubicar[i] = (row, d, s, True)
+                    trobat = True
+                    break
+            if trobat: break
+            
+        # Intent 3 (Relaxació): Canviar de torn
+        if not trobat:
+            slots_alt = slots_tarda if torn_req == 'mati' else slots_mati
+            for d in dies:
+                for s in slots_alt:
+                    if es_franja_valida(docent, grup, d, s, req_espai):
+                        bloquejar_temps(docent, grup, d, s, req_espai)
+                        sessions_a_ubicar[i] = (row, d, s, True)
+                        relaxacions_52.append({
+                            'restriccio': 'R1-TORN',
+                            'sessions': row['id_sessio'],
+                            'justificacio': f"Moguda a {d} {s} per límit d'aules (19) o col·lisió de docent/grup."
+                        })
+                        trobat = True
+                        break
+                if trobat: break
+
+    # ---------------------------------------------------------
+    # 3. FASE D'ESPAIS (Motor 84/100 exacte)
+    # ---------------------------------------------------------
+    def extreure_passadis(aula_str):
+        if pd.isna(aula_str) or not isinstance(aula_str, str): return None
+        match = re.match(r'^([A-Z]\d)/', aula_str)
+        return match.group(1) if match else None
+
+    estat_grups = {}
     
-    # Consolidar relaxacions per restricció
-    df_relax = pd.DataFrame(relaxacions_records)
-    if not df_relax.empty:
-        df_relax = df_relax.groupby(['restriccio', 'justificacio'])['sessions'].apply(lambda x: '|'.join(x)).reset_index()
-        df_relax = df_relax[['restriccio', 'sessions', 'justificacio']]
-    else:
-        df_relax = pd.DataFrame(columns=['restriccio', 'sessions', 'justificacio'])
+    for row, dia, h_ini, _ in sessions_a_ubicar:
+        s_id = row['id_sessio']
+        req_espai = row.get('sense_espai', 0) in [0, '0', False, 0.0] and row.get('tipus') != 'PLAB'
+        alumnes = int(row['alumnes']) if pd.notna(row['alumnes']) else 0
+        grup = row.get('grup')
         
-    df_relax.to_csv('relaxacions.csv', index=False)
-    print("Fitxers generats: proposta-torns.csv i relaxacions.csv")
+        # Si no requereix espai normal, es queda com estava
+        if not req_espai:
+            aula = row.get('aula')
+            proposta_final.append({'id_sessio': s_id, 'dia': dia, 'h_ini': h_ini, 'aula': aula if pd.notna(aula) else ""})
+            continue
+
+        # Lògica d'assignació d'aules del 84/100
+        aula_assignada = None
+        estat = estat_grups.get(grup, {})
+        aula_te_obj = estat.get('aula_te_principal')
+        passadis_obj = estat.get('passadis')
+        edifici_obj = estat.get('edifici')
+
+        def aula_lliure(cand):
+            return (dia, h_ini) not in ocupacio_aules.get(cand, set())
+
+        # P1: Aula TE principal
+        if aula_te_obj in aules_dict and aules_dict[aula_te_obj]['capacitat'] >= alumnes and aula_lliure(aula_te_obj):
+            aula_assignada = aula_te_obj
+            
+        # P2: Mateix passadís històric
+        if not aula_assignada and passadis_obj:
+            for info in aules_docents:
+                cand = info['aula']
+                if info['capacitat'] >= alumnes and extreure_passadis(cand) == passadis_obj and aula_lliure(cand):
+                    aula_assignada = cand
+                    break
+                    
+        # P3: Mateix edifici històric
+        if not aula_assignada and edifici_obj:
+            for info in aules_docents:
+                cand = info['aula']
+                if info['capacitat'] >= alumnes and info['edifici'] == edifici_obj and aula_lliure(cand):
+                    aula_assignada = cand
+                    break
+
+        # P4: Primera aula vàlida (la més ajustada en aforament gràcies a l'ordenació d'aules_docents)
+        if not aula_assignada:
+            for info in aules_docents:
+                cand = info['aula']
+                if info['capacitat'] >= alumnes and aula_lliure(cand):
+                    aula_assignada = cand
+                    break
+                    
+        # P5 (Emergència): La més gran lliure encara que no hi càpiguen (Relaxació Aforament)
+        if not aula_assignada:
+            for info in reversed(aules_docents):
+                cand = info['aula']
+                if aula_lliure(cand):
+                    aula_assignada = cand
+                    relaxacions_52.append({
+                        'restriccio': 'R3-AFORAMENT',
+                        'sessions': s_id,
+                        'justificacio': f"Aforament superat per a {alumnes} alumnes a {cand}."
+                    })
+                    break
+
+        if aula_assignada:
+            ocupacio_aules[aula_assignada].setdefault((dia, h_ini), True)
+            
+            # Actualitzar historial del grup per les prioritats de les següents classes
+            if pd.notna(grup):
+                if grup not in estat_grups:
+                    estat_grups[grup] = {'edifici': aules_dict[aula_assignada]['edifici'], 
+                                         'passadis': extreure_passadis(aula_assignada), 
+                                         'aula_te_principal': None}
+                if row.get('tipus') in ['TE', 'PAUL'] and estat_grups[grup]['aula_te_principal'] is None:
+                    estat_grups[grup]['aula_te_principal'] = aula_assignada
+
+        proposta_final.append({'id_sessio': s_id, 'dia': dia, 'h_ini': h_ini, 'aula': aula_assignada if aula_assignada else ""})
+
+    # ---------------------------------------------------------
+    # 4. GUARDAR RESULTATS
+    # ---------------------------------------------------------
+    df_final = pd.DataFrame(proposta_final)[['id_sessio', 'dia', 'h_ini', 'aula']].sort_values('id_sessio')
+    df_final.to_csv("proposta-horaris-52.csv", index=False)
+    
+    if relaxacions_52:
+        pd.DataFrame(relaxacions_52).to_csv('relaxacions-52.csv', index=False)
+    else:
+        pd.DataFrame(columns=['restriccio', 'sessions', 'justificacio']).to_csv('relaxacions-52.csv', index=False)
+        
+    print(f"\n✅ ÈXIT! S'han processat i guardat {len(df_final)} files a 'proposta-horaris-52.csv'.")
+    print(f"📊 S'han generat {len(relaxacions_52)} relaxacions automàtiques a 'relaxacions-52.csv'.")
 
 if __name__ == "__main__":
-    sessions_q2, aules, activitats, proposta_partida = load_data()
-    time_sol = solve_time_stage(sessions_q2, activitats)
-    space_sol = solve_space_stage(sessions_q2, aules, time_sol)
-    generate_outputs(sessions_q2, time_sol, space_sol)
+    solve_5_2_safe()
